@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.venv/
+env/
+venv/
+
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+
+# Large Datasets & ML Checkpoints (GitHub >100MB limit)
+*.h5
+*.hdf5
+*.nc
+*.pth
+*.pt
+*.bin
+*.tar.gz
+*.zip
+backend/ml/data/raw/
+backend/ml/checkpoints/
+work/playwright/
