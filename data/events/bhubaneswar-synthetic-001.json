@@ -1,0 +1,234 @@
+{
+  "schema_version": "1.0.0",
+  "event_id": "bhubaneswar-synthetic-001",
+  "label": "Bhubaneswar convective replay fixture",
+  "region": "Bhubaneswar, Odisha, India",
+  "mode": "REPLAY",
+  "evidence_status": "SIMULATED",
+  "coordinate_reference_system": "EPSG:4326",
+  "starts_at": "2026-06-18T10:30:00Z",
+  "issue_time": "2026-06-18T12:00:00Z",
+  "ends_at": "2026-06-18T13:30:00Z",
+  "timeline_step_minutes": 30,
+  "horizon_minutes": 360,
+  "verification_status": "NOT_EVALUATED",
+  "metrics": {
+    "csi": null,
+    "pod": null,
+    "far": null
+  },
+  "sources": [
+    {
+      "source_id": "sim-radar-grid",
+      "name": "Synthetic radar reflectivity grid",
+      "modality": "radar",
+      "evidence_status": "SIMULATED",
+      "availability": "AVAILABLE",
+      "quality_status": "DEMO_ONLY",
+      "freshness_minutes": 0,
+      "provenance": "Deterministic Phase 2 fixture generated for software integration; not meteorological evidence."
+    },
+    {
+      "source_id": "sim-satellite-ir",
+      "name": "Synthetic infrared source declaration",
+      "modality": "satellite",
+      "evidence_status": "SIMULATED",
+      "availability": "NOT_AVAILABLE",
+      "quality_status": "NO_RASTER_PAYLOAD",
+      "freshness_minutes": null,
+      "provenance": "The Phase 2 fixture declares an infrared source but contains no thermal raster or aligned time series; not an INSAT product."
+    },
+    {
+      "source_id": "sim-lightning-events",
+      "name": "Synthetic lightning event stream",
+      "modality": "lightning",
+      "evidence_status": "SIMULATED",
+      "availability": "AVAILABLE",
+      "quality_status": "DEMO_ONLY",
+      "freshness_minutes": 0,
+      "provenance": "Deterministic Phase 2 fixture generated for software integration; not an IITM or IMD feed."
+    }
+  ],
+  "frames": [
+    {
+      "frame_id": "obs-m090",
+      "offset_minutes": -90,
+      "valid_time": "2026-06-18T10:30:00Z",
+      "record_type": "OBSERVATION",
+      "available_at_issue_time": true,
+      "cells": [
+        {
+          "cell_id": "cell-sim-01",
+          "centroid": { "lat": 20.54, "lon": 85.50 },
+          "max_reflectivity_dbz": 37.0,
+          "rain_rate_mm_h": 18.0,
+          "lightning_flashes": 3,
+          "lifecycle_state": "DEVELOPING"
+        }
+      ],
+      "events": [
+        {
+          "source_id": "sim-radar-grid",
+          "level": "INFO",
+          "message": "Replay frame loaded from deterministic synthetic fixture."
+        }
+      ]
+    },
+    {
+      "frame_id": "obs-m060",
+      "offset_minutes": -60,
+      "valid_time": "2026-06-18T11:00:00Z",
+      "record_type": "OBSERVATION",
+      "available_at_issue_time": true,
+      "cells": [
+        {
+          "cell_id": "cell-sim-01",
+          "centroid": { "lat": 20.47, "lon": 85.58 },
+          "max_reflectivity_dbz": 41.0,
+          "rain_rate_mm_h": 25.0,
+          "lightning_flashes": 7,
+          "lifecycle_state": "INTENSIFYING"
+        }
+      ],
+      "events": [
+        {
+          "source_id": "sim-lightning-events",
+          "level": "INFO",
+          "message": "Synthetic flash count increased within the tracked cell."
+        }
+      ]
+    },
+    {
+      "frame_id": "obs-m030",
+      "offset_minutes": -30,
+      "valid_time": "2026-06-18T11:30:00Z",
+      "record_type": "OBSERVATION",
+      "available_at_issue_time": true,
+      "cells": [
+        {
+          "cell_id": "cell-sim-01",
+          "centroid": { "lat": 20.40, "lon": 85.66 },
+          "max_reflectivity_dbz": 46.0,
+          "rain_rate_mm_h": 34.0,
+          "lightning_flashes": 12,
+          "lifecycle_state": "INTENSIFYING"
+        }
+      ],
+      "events": [
+        {
+          "source_id": "system",
+          "level": "INFO",
+          "message": "Synthetic radar and lightning records follow the replay clock; no thermal raster is supplied."
+        }
+      ]
+    },
+    {
+      "frame_id": "obs-t000",
+      "offset_minutes": 0,
+      "valid_time": "2026-06-18T12:00:00Z",
+      "record_type": "OBSERVATION",
+      "available_at_issue_time": true,
+      "cells": [
+        {
+          "cell_id": "cell-sim-01",
+          "centroid": { "lat": 20.34, "lon": 85.73 },
+          "max_reflectivity_dbz": 49.0,
+          "rain_rate_mm_h": 41.0,
+          "lightning_flashes": 15,
+          "lifecycle_state": "MATURE"
+        }
+      ],
+      "events": [
+        {
+          "source_id": "system",
+          "level": "WATCH",
+          "message": "Issue-time boundary reached; later observations remain hidden until replay advances."
+        }
+      ]
+    },
+    {
+      "frame_id": "obs-p030",
+      "offset_minutes": 30,
+      "valid_time": "2026-06-18T12:30:00Z",
+      "record_type": "OBSERVATION",
+      "available_at_issue_time": false,
+      "cells": [
+        {
+          "cell_id": "cell-sim-01",
+          "centroid": { "lat": 20.29, "lon": 85.80 },
+          "max_reflectivity_dbz": 51.0,
+          "rain_rate_mm_h": 47.0,
+          "lightning_flashes": 18,
+          "lifecycle_state": "MATURE"
+        }
+      ],
+      "events": [
+        {
+          "source_id": "system",
+          "level": "WATCH",
+          "message": "Future observation revealed by replay controller."
+        }
+      ]
+    },
+    {
+      "frame_id": "obs-p060",
+      "offset_minutes": 60,
+      "valid_time": "2026-06-18T13:00:00Z",
+      "record_type": "OBSERVATION",
+      "available_at_issue_time": false,
+      "cells": [
+        {
+          "cell_id": "cell-sim-01",
+          "centroid": { "lat": 20.24, "lon": 85.87 },
+          "max_reflectivity_dbz": 45.0,
+          "rain_rate_mm_h": 31.0,
+          "lightning_flashes": 10,
+          "lifecycle_state": "WEAKENING"
+        }
+      ],
+      "events": [
+        {
+          "source_id": "sim-radar-grid",
+          "level": "INFO",
+          "message": "Synthetic cell intensity decreased after the issue-time peak."
+        }
+      ]
+    },
+    {
+      "frame_id": "obs-p090",
+      "offset_minutes": 90,
+      "valid_time": "2026-06-18T13:30:00Z",
+      "record_type": "OBSERVATION",
+      "available_at_issue_time": false,
+      "cells": [
+        {
+          "cell_id": "cell-sim-01",
+          "centroid": { "lat": 20.19, "lon": 85.94 },
+          "max_reflectivity_dbz": 38.0,
+          "rain_rate_mm_h": 20.0,
+          "lightning_flashes": 4,
+          "lifecycle_state": "DISSIPATING"
+        }
+      ],
+      "events": [
+        {
+          "source_id": "system",
+          "level": "INFO",
+          "message": "End of deterministic Phase 2 replay bundle."
+        }
+      ]
+    }
+  ],
+  "provenance": {
+    "dataset_id": "synthetic-phase2-fixture",
+    "dataset_version": "1.0.0",
+    "created_for": "VAJRA Phase 2 data and replay integration",
+    "model_version": null,
+    "code_version": "scaffold-0.2.0"
+  },
+  "limitations": [
+    "All observations are simulated and must not be used for meteorological or operational claims.",
+    "No forecast, ETA, hazard probability, or verification metric is included in this Phase 2 bundle.",
+    "Indian operational data adapters remain disabled until authorized data are obtained."
+  ]
+}

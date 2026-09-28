@@ -1,0 +1,20 @@
+{
+  "model_id": "convlstm-sevir-v0",
+  "architecture": "LightweightConvLSTM",
+  "framework": "PyTorch",
+  "checkpoint_path": "models/prototype/convlstm-sevir-v0.pth",
+  "checkpoint_sha256": "2d2ee7d983869677db114aa8159e7f35d339e5b855307b0f6f75b1992f01e6e0",
+  "parameter_count": 90945,
+  "status": "UNVALIDATED_PROTOTYPE",
+  "evidence_status": "IMPLEMENTED",
+  "training_dataset": "SEVIR VIL subset supplied with the previous prototype",
+  "input_contract": "Float tensor shaped [batch, 1, 13, height, width] normalized to [0, 1]",
+  "output_contract": "Float tensor shaped [batch, 1, 12, height, width] normalized to [0, 1]",
+  "limitations": [
+    "No retained experiment log or split manifest was supplied with the checkpoint.",
+    "The previous dataset implementation normalized using the full event, including future frames.",
+    "The previous evaluation selected a threshold on the same batch it reported.",
+    "The checkpoint has not been evaluated on a held-out India dataset.",
+    "Do not display its outputs as validated hazard probabilities, ETA, or operational forecasts."
+  ]
+}

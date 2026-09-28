@@ -1,0 +1,20 @@
+{
+  "model_id": "convectnet-st-v0",
+  "architecture": "3D-CNN + CBAM + 2-layer ConvLSTM",
+  "framework": "PyTorch",
+  "checkpoint_path": "models/prototype/convectnet-st-v0.pth",
+  "checkpoint_sha256": "22020351a25739c84613867cb13c2f2e3860602035e7617fe710c803f130ad4f",
+  "parameter_count": 2740238,
+  "status": "UNVALIDATED_PROTOTYPE",
+  "evidence_status": "IMPLEMENTED",
+  "training_dataset": "Supplied ConvectNow checkpoint; its scripts claim a SEVIR-derived split, not independently reproduced",
+  "input_contract": "Float tensor shaped [batch, 4, time, height, width]; channels are VIL/reflectivity, temporal delta, IR cooling, and lightning",
+  "output_contract": "Experimental spatial nowcast plus uncalibrated hail, cloudburst, downburst, and convective-initiation heads",
+  "limitations": [
+    "The state dictionary contains no run metadata, dataset manifest, split IDs, normalization statistics, or calibration record.",
+    "The supplied evaluation report cannot be tied cryptographically to this checkpoint or independently reproduced from retained artifacts.",
+    "The four input channels are not yet available as a co-registered, issue-time-safe VAJRA replay cube.",
+    "Hazard head outputs must not be displayed as probabilities, alerts, ETA, or operational guidance.",
+    "The model is registered for engineering smoke tests only until frozen-set evaluation is completed."
+  ]
+}

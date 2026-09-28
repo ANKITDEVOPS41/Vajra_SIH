@@ -273,7 +273,16 @@ class TestETAEngine:
     def test_arrived_returns_arrived_status(self):
         result = compute_eta("POINT", JAYDEV_VIHAR, ARRIVED_TRACK)
         assert result.status == ETAStatus.ARRIVED
-        assert result.eta_minutes is not None   # 0 or near-0
+        assert result.eta_minutes is None
+
+    def test_crossing_is_inside_sample_interval(self):
+        track = [
+            CellPosition(lon=85.74, lat=20.2961, lead_min=0, radius_km=2.0),
+            CellPosition(lon=85.83, lat=20.2961, lead_min=10, radius_km=2.0),
+        ]
+        result = compute_eta("POINT", JAYDEV_VIHAR, track)
+        assert result.status == ETAStatus.COMPUTED
+        assert 0 < result.eta_minutes < 10
 
     # ---- UNKNOWN (no intersection in horizon) ------------------------------
 

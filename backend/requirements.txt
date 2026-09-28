@@ -3,3 +3,7 @@ uvicorn
 httpx
 numpy
 opencv-python-headless
+scipy
+h5py
+shapely
+pyproj

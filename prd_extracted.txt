@@ -1,0 +1,295 @@
+VAJRA
+FINAL BLASTER PRD — V2
+Location-First Multimodal Convective Nowcasting & Severe-Weather Intelligence Platform
+SIH 2026 • SIH26084 • Antigravity Full-Product Build Specification
+BUILD TARGET: SIH-ready, production-style MVP with a credible path to operational deployment.
+FLAGSHIP USP: Translate a convective forecast field into queryable location/corridor-specific 0–6 hour hazard intelligence, spatial intersection and ETA.
+Truth rule: maximize engineering credibility; never fabricate data, accuracy, live status, government integration or scientific validation.
+0. Non-Negotiable Product Truth
+The existing PRD establishes this evidence-first contract and explicitly prohibits fabricated live APIs, metrics, training results and government integrations. fileciteturn5file4L20-L27
+1. Executive Product Definition
+VAJRA is a proposed multimodal convective intelligence platform for SIH26084. It transforms atmospheric observations into structured convective-cell state, tracking, short-horizon evolution forecasts, evidence-gated hazard intelligence, uncertainty and GIS decision support.
+VAJRA is NOT positioned as “another AI weather app” or as a replacement for established meteorological nowcasting. The project research shows that India already has substantial radar/satellite/lightning nowcasting infrastructure; therefore the defensible product thesis is the translation layer from evolving forecast fields to specific operationally relevant locations and corridors. fileciteturn6file0
+1.1 Product North Star
+OBSERVE → ALIGN → DETECT → TRACK → UNDERSTAND → FORECAST → QUANTIFY UNCERTAINTY → LOCALIZE → VISUALIZE → VERIFY
+Core question: “What is the predicted convective hazard around this selected location or route during the next several hours, and when is the evolving storm expected to intersect it?”
+1.2 ★ Flagship USP: LOCATION-FIRST CONVECTIVE INTELLIGENCE
+The product should make location intelligence a first-class engine, not a map decoration.
+Example workflow: an authorized user selects Jaydev Vihar Square, Bhubaneswar. VAJRA evaluates the selected coordinate against the current convective-cell state, predicted trajectory/field and evidence-supported hazards. The UI then presents the evolving hazard timeline and ETA only when a valid spatial/temporal intersection exists.
+A second workflow accepts a corridor such as Jaydev Vihar → Master Canteen → Kalinga Nagar → Tamando. VAJRA evaluates where and when the forecast hazard field intersects the corridor. This is a proposed product capability, not a claim about an existing operational government service.
+2. Product Architecture
+RADAR + SATELLITE + LIGHTNING + SURFACE/UPPER-AIR + NWP
+                         ↓
+                 SOURCE ADAPTERS
+                         ↓
+                RAW/EVENT ARCHIVE
+                         ↓
+                 QUALITY CONTROL
+                         ↓
+              TIME/SPACE ALIGNMENT
+                         ↓
+              CONVECTIVE STATE ENGINE
+        initiation • segmentation • tracking • lifecycle
+                         ↓
+                 MULTIMODAL FUSION
+                         ↓
+                  FORECAST ENGINE
+       persistence • advection • learned model
+                         ↓
+                   HAZARD ENGINE
+                         ↓
+              UNCERTAINTY + DATA HEALTH
+                         ↓
+        ★ LOCATION INTELLIGENCE ENGINE ★
+       point • polygon • corridor • route • ETA
+                         ↓
+              GIS + REPLAY + VERIFY
+                         ↓
+                CONTROL ROOM USER
+                         ↓
+        EXISTING OFFICIAL WORKFLOW
+3. Product Tiers
+4. Core User Journeys
+4.1 Location Query — Jaydev Vihar
+Open VAJRA.
+Choose replay/authorized live mode.
+Select Jaydev Vihar or a map coordinate.
+Check source freshness and modality availability.
+Identify active convective cells.
+Compute cell/forecast relationship to the location.
+Generate 0–6 h time-indexed location intelligence.
+Show ETA only when the trajectory/intersection calculation is valid.
+Inspect hazards, uncertainty, provenance and model version.
+Replay forward and verify against later observations.
+4.2 Corridor Query — Jaydev Vihar → Master Canteen → Kalinga Nagar → Tamando
+Create ordered waypoints or draw a corridor.
+Convert it to a spatial query geometry.
+Intersect forecast cell tracks/hazard fields with the corridor.
+Return time-windowed exposure for each waypoint/segment where supported.
+Display the sequence on a timeline.
+Replay and compare forecast intersections with observations.
+4.3 Scientific Replay
+Freeze an event at issue time.
+Hide all future observations.
+Generate/restore forecast.
+Advance time.
+Reveal observations.
+Compute forecast-vs-observation metrics.
+Compare against persistence/advection baseline.
+5. ★ Location Intelligence Engine — Detailed PRD
+Status: PROPOSED PRODUCT REQUIREMENT / MVP PROPOSAL.
+5.1 Input/output contract
+5.2 LocationQuery schema
+query_id
+geometry_type: POINT | POLYGON | ROUTE
+geometry
+coordinate_reference_system
+name
+source_of_location
+issue_time
+horizon_minutes
+created_at
+5.3 LocationImpact schema
+query_id
+valid_time
+cell_id
+hazard
+value
+unit
+method
+evidence_status
+spatial_relation
+distance_km
+eta_minutes
+uncertainty
+source_ids
+forecast_id
+model_version
+5.4 ETA rules
+ETA is a computed scientific/product output, not a decorative timer. It must be derived from a forecast trajectory or evolving hazard field and a defined spatial intersection. If track continuity, time alignment, geometry or uncertainty prevents a defensible estimate, return UNKNOWN/NOT COMPUTABLE.
+Do not calculate ETA by blindly dividing straight-line distance by current speed. Store the exact ETA method in provenance.
+5.5 Location timeline
+Provide T+00 through T+360 or the configured horizon, with every displayed point tied to a backend forecast record. After replay reveal, show observed state alongside forecast state.
+5.6 Route intelligence boundary
+The MVP should report forecast intersection/exposure, not autonomously tell a person to travel or not travel. Any operational recommendation must be based on a separately defined and validated rule.
+6. Convective Cell Digital Twin
+This is a software abstraction, not a claim of a new scientific standard.
+Lifecycle proposal: INITIATING → DEVELOPING → INTENSIFYING → MATURE → WEAKENING → DISSIPATING, with SPLIT/MERGE graph events where the tracker supports them.
+7. Data Strategy
+The current data manifest identifies SEVIR, NEXRAD Level II, NOAA Storm Events and IMD rainfall as immediately usable development/context sources; INSAT/MOSDAC, ERA5/IMDAA require access workflows; IMD DWR, national lightning and some AWS/gauge data are permissioned/unverified for this MVP. fileciteturn5file5L11-L25
+The data research explicitly warns that public dashboard visibility is not equivalent to downloadable ML data. fileciteturn5file5L45-L55
+8. ML/Intelligence Engine
+8.1 Baseline-first
+Persistence / last-state.
+Optical-flow/advection / pySTEPS where representation permits.
+Object-based cell tracking.
+Held-out evaluation.
+Compact learned model.
+Multimodal fusion.
+Advanced transformer/hybrid only if evidence and compute justify it.
+8.2 Candidate methods
+Sophistication is not a success criterion. Actual held-out evidence is.
+9. Hazard Intelligence
+The supporting research identifies high-frequency gauge/AWS or calibrated radar QPE as the strongest cloudburst validation routes and warns against using generic reports or cold cloud-top temperature as cloudburst truth. fileciteturn5file6L141-L157
+10. Trust, Uncertainty & Provenance
+Show data freshness.
+Show available/missing modalities.
+Separate measured, inferred, baseline, learned and simulated outputs.
+Show confidence only with a defined methodology.
+Do not equate model confidence with correctness probability without calibration.
+Expose uncertainty drivers.
+Expose model/data/code versions.
+Expose issue_time and valid_time.
+Never display a deterministic future polygon as absolute certainty.
+11. Control-Room UX
+Visual style: professional meteorological control room, map-first, high information density, semantic accessible colors, no decorative consumer-weather gimmicks.
+12. API Contract
+These are proposed VAJRA APIs, not existing government APIs.
+13. Validation Framework
+13.1 Mandatory ablation
+Radar only
+Radar + satellite
+Radar + lightning
+Radar + satellite + lightning
+Full model with environmental/NWP context if available
+Never assume multimodal fusion improves performance. Measure it.
+India performance claims remain blocked until authorized Indian data are actually received, synchronized, labelled and evaluated on held-out events. fileciteturn5file5L42-L46
+14. Data Model
+15. Functional Requirements
+16. Non-Functional Requirements
+17. Recommended Stack
+Do not add Kubernetes, Kafka, blockchain, mobile apps or unrelated LLM features merely for appearance.
+18. Repository Blueprint
+vajra/
+├── apps/web/
+├── apps/api/
+├── data/raw/ processed/ events/ manifests/
+├── ml/baselines/ detection/ tracking/ forecasting/ fusion/ hazards/
+├── pipelines/ingestion/ qc/ alignment/ inference/
+├── location/query/ intersection/ eta/ route/
+├── evaluation/ scripts/ configs/ tests/ docs/ models/ docker/
+├── PRD.md
+├── DATA_MANIFEST.md
+└── README.md
+19. ANTIGRAVITY MASTER BUILD DIRECTIVE
+Paste this after placing PRD.md in the project:
+You are the lead autonomous engineer for VAJRA / SIH26084.
+
+Read PRD.md completely before modifying the repository.
+
+MISSION:
+Build a complete, runnable, evidence-first MVP. The flagship capability is LOCATION-FIRST CONVECTIVE INTELLIGENCE: select a point/corridor and compute how forecast convective cells/hazard fields evolve relative to that geometry over 0–6 hours, including ETA only when mathematically valid.
+
+RULES:
+1. Inspect repository, environment, compute and data first.
+2. Preserve working code.
+3. Work phase-by-phase with tests after each phase.
+4. Never fabricate live weather, APIs, metrics, training results, labels or government integration.
+5. Synthetic data = SIMULATED/DEMO.
+6. Historical data = REPLAY.
+7. Every output has provenance, method, evidence status, issue_time, valid_time and model version.
+8. Never hard-code example probabilities, ETAs or metrics.
+9. If data are unavailable, use adapter + documented fallback.
+10. Baseline first; learned model second; multimodal fusion third.
+11. Build one coherent vertical slice.
+12. Perform scientific red-team before finalization.
+
+MANDATORY VERTICAL SLICE:
+event → QC → cell detection → tracking → baseline forecast → location query → spatial intersection → ETA → GIS → replay → verification.
+
+LOCATION ENGINE:
+- point selection
+- coordinate provenance
+- backend spatial intersection
+- valid ETA
+- 0–6h timeline
+- corridor/route after point flow is stable
+- evidence/uncertainty/data health
+- UNKNOWN when computation is not defensible
+
+HAZARDS:
+Only expose validated/evidence-supported outputs. Hail/downburst/cloudburst probability must never be invented.
+
+DEMO:
+0–10 event
+10–20 source health
+20–30 cell
+30–40 location
+40–50 forecast/intersection
+50–60 ETA/timeline
+60–70 hazard/evidence
+70–80 future reveal
+80–90 verification/baseline
+
+FINAL TEST:
+Ask “Where did this number come from?”, “Was it available at issue time?”, “Is it observed/inferred/simulated/predicted?”, and “Did it match later observations?” The product must answer.
+20. Phase-by-Phase Execution
+21. Seven-Day Build Plan
+Day-7 freeze: no major architecture changes unless a critical defect requires one.
+22. 90-Second Judge Demo
+Open deterministic replay.
+Show source health and issue time.
+Select an active cell.
+Select Jaydev Vihar or a map point.
+Show forecast intersection and computed ETA.
+Scrub the 0–6 hour location timeline.
+Show hazard layers with evidence labels.
+Advance into observations.
+Reveal actual evolution.
+Show metrics and baseline comparison.
+Optionally demonstrate the corridor Jaydev Vihar → Master Canteen → Kalinga Nagar → Tamando.
+23. Claim-Safety Red Team
+24. Ministry / Operational Adaptability
+Operational deployment, official integration and forecaster acceptance are future requirements; the MVP must not claim them.
+25. Testing & Quality Gates
+Spatial intersection unit tests.
+ETA calculation tests.
+Coordinate/time alignment tests.
+Missing/stale data tests.
+Replay determinism.
+API contract tests.
+Map → cell → location → timeline smoke test.
+Forecast leakage test.
+Metric calculation fixtures.
+Provenance/evidence rendering tests.
+Clean offline demo test.
+Final unsupported-claims scan.
+26. Final Acceptance Criteria
+System starts with documented commands.
+Replay event loads offline.
+Observations contain source/timestamp/quality metadata.
+Backend generates cell objects and tracks.
+Baseline forecast runs and stores forecast records.
+Location query works against forecast state.
+ETA appears only when valid.
+Location timeline is backend-derived.
+Hazard outputs show method/evidence status.
+Issue-time freeze prevents future leakage.
+Verification computes actual metrics.
+Baseline comparison is visible.
+Missing data causes graceful degradation.
+No fake live status or fabricated metrics.
+Final demo repeats reliably offline.
+27. Risk Register
+28. Required Project Documents
+PRD.md
+docs/IMPLEMENTATION_PLAN.md
+DATA_MANIFEST.md
+MODEL_CARD.md
+EXPERIMENT_LOG.md
+VALIDATION_REPORT.md
+DEMO_SCRIPT.md
+CLAIMS_REGISTER.md
+ARCHITECTURE.md
+README.md
+29. Product Experience North Star
+The strongest demo is not the one with the most animations. It is the one where a skeptical meteorologist can trace: observation → cell → track → forecast → location intersection → hazard → uncertainty → verification.
+30. Final Product Definition
+VAJRA is a proposed multimodal convective intelligence platform that transforms evolving atmospheric observations into verifiable 0–6 hour storm forecasts and translates those forecasts into location- and corridor-specific hazard timelines and arrival estimates for operational decision support.
+This positioning preserves the scientific reality that advanced nowcasting already exists while making VAJRA's proposed product contribution concrete: turning forecast fields into a queryable, evidence-aware location intelligence layer.
+31. Source/Evidence Notes
+The prior final Blaster PRD supplies the evidence-first operating contract, data model, baseline-first ML strategy, replay verification and phased Antigravity build sequence. fileciteturn5file4L20-L27
+The current data manifest supplies the green/yellow/red dataset-access strategy and the India-claim gate. fileciteturn5file5L3-L9 fileciteturn5file5L42-L46
+The research dossier supplies the wider dataset universe and limitations around India radar/lightning/rainfall and severe-hazard labels. fileciteturn5file6L12-L30
+VAJRA — BUILD THE PRODUCT, NOT THE MOCKUP
+Observe → Track → Predict → Localize → Quantify uncertainty → Verify

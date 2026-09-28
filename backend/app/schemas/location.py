@@ -15,9 +15,9 @@ and evidence_status so the jury can trace "where did this number come from?"
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -50,6 +50,13 @@ class EvidenceStatus(str, Enum):
     LEARNED_FORECAST   = "LEARNED_FORECAST"
     SIMULATED          = "SIMULATED"        # synthetic / demo data
     DEGRADED           = "DEGRADED"         # stale / missing source fallback
+    DATASET_VERIFIED   = "DATASET_VERIFIED" # source identity checked, not georeferenced
+
+
+class GeoPoint(BaseModel):
+    """WGS84 coordinate used by replay and forecast payloads."""
+    lat: float = Field(ge=-90.0, le=90.0)
+    lon: float = Field(ge=-180.0, le=180.0)
 
 
 class SpatialRelation(str, Enum):
@@ -199,8 +206,12 @@ class LocationQuery(BaseModel):
         le=360,
         description="Forecast horizon in minutes from issue_time (30–360 min)"
     )
+    forecast_mode: Literal["BASELINE", "LEARNED"] = Field(
+        default="BASELINE",
+        description="Requested forecast source; learned location queries require georeferenced model output"
+    )
     created_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=lambda: datetime.now(timezone.utc),
         description="Wall-clock time the query object was instantiated"
     )
 
@@ -308,6 +319,10 @@ class LocationImpact(BaseModel):
     )
 
     # ---- temporal -------------------------------------------------------
+    issue_time: Optional[datetime] = Field(
+        default=None,
+        description="Issue time of the forecast run; populated on API-produced impacts"
+    )
     valid_time:  datetime = Field(
         ...,
         description="The forecast valid time this record describes (T0 + lead)"
@@ -384,7 +399,7 @@ class LocationImpact(BaseModel):
         """Shorthand; None if ETA is not COMPUTED."""
         return self.eta.eta_minutes
 
-    model_config = {"json_schema_extra": {
+    model_config = {"protected_namespaces": (), "json_schema_extra": {
         "examples": [{
             "query_id": "550e8400-e29b-41d4-a716-446655440000",
             "valid_time": "2023-10-05T09:00:00Z",
@@ -405,3 +420,17 @@ class LocationImpact(BaseModel):
             }
         }]
     }}
+
+
+class LocationQueryResult(BaseModel):
+    """Issue-time-aligned spatial evaluation across the forecast horizon."""
+    model_config = {"protected_namespaces": ()}
+
+    query_id: str
+    issue_time: datetime
+    status: str
+    evidence_status: EvidenceStatus
+    model_version: Optional[str] = None
+    model_status: Optional[str] = None
+    impacts: List[LocationImpact]
+    message: str

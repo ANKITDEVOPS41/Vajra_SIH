@@ -7,20 +7,30 @@ __pycache__/
 env/
 venv/
 
+# Secrets and local service configuration
+.env
+.env.*
+config.json
+*.pem
+*.key
+
 # Node / Frontend
 node_modules/
 dist/
 .vite/
 
 # Large Datasets & ML Checkpoints (GitHub >100MB limit)
+datasets/
 *.h5
 *.hdf5
 *.nc
 *.pth
 *.pt
+*.npy
 *.bin
 *.tar.gz
 *.zip
 backend/ml/data/raw/
 backend/ml/checkpoints/
 work/playwright/
+.playwright-cli/
