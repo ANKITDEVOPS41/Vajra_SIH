@@ -84,3 +84,12 @@ because high-frequency gauge/calibrated QPE and validated hail evidence are
 absent. Learned screens stay in SEVIR pixel space and cannot drive India
 location alerts or ETA. The dashboard displays these method/evidence states
 alongside the explicit missing-modality feed.
+
+## Phase 11.5 Spatial Analytics
+
+The Threat Triage Board accepts a WGS84 GeoJSON asset collection and runs one
+location query per asset. The map renders incremental T+10/20/30 swept baseline
+footprints, while the replay HUD reports adjacent-observation dBZ change.
+The IMD DWR / MOSDAC bridge exposes its dormant ingestion contract and remains
+disconnected pending authorization and source validation. See
+`docs/phase_11_5_spatial_analytics.md` for endpoints, methods, and gates.

@@ -1,19 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
-import { CircleMarker, MapContainer, Polygon, Polyline, TileLayer, useMapEvents } from "react-leaflet";
+import { CircleMarker, MapContainer, Polygon, Polyline, TileLayer, Tooltip as LeafletTooltip, useMapEvents } from "react-leaflet";
 import {
   Activity,
   BarChart3,
-  Binary,
   CloudLightning,
   Cpu,
   Crosshair,
   DatabaseZap,
   Gauge,
   Layers3,
-  LockKeyhole,
   MapPin,
   MapPinned,
+  PanelRightOpen,
   Pause,
   Play,
   Radar,
@@ -34,8 +33,19 @@ import {
   YAxis,
 } from "recharts";
 import { renderVilGrid } from "./lib/gridOverlay";
-
-type EvidenceStatus = "SIMULATED" | "DATASET_VERIFIED" | "LEARNED_FORECAST" | "IMPLEMENTED" | "UNKNOWN";
+import { LocationImpactDrawer } from "./components/LocationImpactDrawer";
+import { LocationNeighborhoodMatrix } from "./components/LocationNeighborhoodMatrix";
+import { ThreatTriageBoard } from "./components/ThreatTriageBoard";
+import { DualSplitVerification } from "./components/DualSplitVerification";
+import { WmoScorecardModal } from "./components/WmoScorecardModal";
+import { AirfieldRunwayTwin } from "./components/AirfieldRunwayTwin";
+import { SachetMobileSimulator } from "./components/SachetMobileSimulator";
+import { LayerController } from "./components/LayerController";
+import { RadarFieldLayer, useRadarFrame } from "./components/RadarFieldLayer";
+import { AIPipelineWorkspace } from "./components/AIPipelineWorkspace";
+import { DataSourcesWorkspace } from "./components/DataSourcesWorkspace";
+import type { AssetTriageReport, IMDBridgeStatus, IntensificationReport, IsochroneReport } from "./types/analytics";
+import type { EvidenceStatus, LocationNeighborhoodCell, LocationQueryResult } from "./types/location";
 
 type ReplaySource = {
   source_id: string;
@@ -109,34 +119,21 @@ type TelemetrySnapshot = {
   pod: number | null;
 };
 
-type LocationQueryResult = {
-  query_id: string;
-  issue_time: string;
-  status: "COMPUTED" | "NOT_COMPUTABLE";
+type VerificationReport = {
+  source: "SYNTHETIC" | "SEVIR";
+  status: "COMPUTED" | "UNVALIDATED";
+  forecast_validation_status: "UNVALIDATED";
   evidence_status: EvidenceStatus;
-  model_version: string | null;
-  model_status: string | null;
-  impacts: LocationImpact[];
-  message: string;
-};
-
-type LocationImpact = {
-  valid_time: string;
-  lead_minutes: number;
-  cell_id: string;
-  hazard: string;
-  value: number | null;
-  unit: string;
-  spatial_relation: "INTERSECTS" | "WITHIN" | "APPROACHING" | "RECEDING" | "NO_RELATION";
-  distance_km: number | null;
-  eta: {
-    status: "COMPUTED" | "ARRIVED" | "UNKNOWN" | "NOT_COMPUTABLE";
-    eta_minutes: number | null;
-    method: string;
-    confidence: number | null;
-    not_computable_reason: string | null;
-  };
-  evidence_status: EvidenceStatus;
+  method: string;
+  field: string;
+  threshold: number;
+  threshold_unit: string;
+  georeferenced: boolean;
+  observation_source: string;
+  leads: { lead_minutes: number; csi: number | null; pod: number | null }[];
+  csi: number | null;
+  pod: number | null;
+  limitations: string[];
 };
 
 type GridReplayMetadata = {
@@ -211,10 +208,13 @@ type ModelArtifact = {
 
 type BaselineCell = {
   cell_id: string;
-  lead_minutes: number;
+  lead_minutes?: number;
   centroid: { lat: number; lon: number };
   polygon: { lat: number; lon: number }[];
   equivalent_radius_km: number;
+  max_reflectivity_dbz: number;
+  area_km2?: number;
+  qc_removed_pixels?: number;
 };
 
 type BaselineForecast = {
@@ -226,17 +226,23 @@ type BaselineForecast = {
   limitations: string[];
 };
 
-const navItems = [
-  { label: "Replay", icon: Radar, active: true },
-  { label: "Data Sources", icon: DatabaseZap, active: false },
-  { label: "Location Intel", icon: MapPinned, active: false },
-  { label: "Digital Twin", icon: Binary, active: false },
-  { label: "Verification", icon: Layers3, active: false },
-];
+const workspaces = [
+  { id: "spatial", label: "Spatial Nowcast", icon: MapPinned },
+  { id: "verification", label: "Dual-Screen Verification", icon: Layers3 },
+  { id: "airfield", label: "Airfield Runway Twin", icon: Route },
+  { id: "alert", label: "Sachet / Public Alert", icon: Shield },
+  { id: "ai", label: "AI Pipeline & XAI", icon: Cpu },
+  { id: "sources", label: "Data Sources & IMD", icon: DatabaseZap },
+] as const;
+type Workspace = (typeof workspaces)[number]["id"];
 
 const initialPoint = { lat: 20.2961, lon: 85.8245 };
 
 function App() {
+  const [workspace, setWorkspace] = useState<Workspace>("spatial");
+  const [scorecardOpen, setScorecardOpen] = useState(false);
+  const [radarEnabled, setRadarEnabled] = useState(false);
+  const [radarOpacity, setRadarOpacity] = useState(0.75);
   const [telemetry, setTelemetry] = useState<TelemetrySnapshot | null>(null);
   const [replay, setReplay] = useState<ReplaySession | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -244,8 +250,16 @@ function App() {
   const [selectedPoint, setSelectedPoint] = useState(initialPoint);
   const [queryResult, setQueryResult] = useState<LocationQueryResult | null>(null);
   const [querying, setQuerying] = useState(false);
+  const [neighborhoodCells, setNeighborhoodCells] = useState<LocationNeighborhoodCell[]>([]);
+  const [impactDrawer, setImpactDrawer] = useState<{ name: string; coordinates: { lat: number; lon: number }; result: LocationQueryResult } | null>(null);
+  const queryGeneration = useRef(0);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [forecastMode, setForecastMode] = useState<"BASELINE" | "LEARNED">("BASELINE");
+  const [triageReport, setTriageReport] = useState<AssetTriageReport | null>(null);
+  const [isochrones, setIsochrones] = useState<IsochroneReport | null>(null);
+  const [showIsochrones, setShowIsochrones] = useState(true);
+  const [intensification, setIntensification] = useState<IntensificationReport | null>(null);
+  const [imdBridge, setImdBridge] = useState<IMDBridgeStatus | null>(null);
   const [learnedForecast, setLearnedForecast] = useState<LearnedGridForecast | null>(null);
   const [learnedError, setLearnedError] = useState<string | null>(null);
   const [learnedIndex, setLearnedIndex] = useState(0);
@@ -253,11 +267,15 @@ function App() {
   const [gridFrame, setGridFrame] = useState<GridReplayFrame | null>(null);
   const [modelArtifacts, setModelArtifacts] = useState<ModelArtifact[]>([]);
   const [baseline, setBaseline] = useState<BaselineForecast | null>(null);
+  const [verification, setVerification] = useState<VerificationReport | null>(null);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [hoveredLearnedCell, setHoveredLearnedCell] = useState<LearnedGridForecast["frames"][number]["cells"][number] | null>(null);
   const [modalities, setModalities] = useState<MultimodalStatus | null>(null);
   const [baselineHazards, setBaselineHazards] = useState<HazardScreening | null>(null);
   const [learnedHazards, setLearnedHazards] = useState<HazardScreening | null>(null);
   const [gridIndex, setGridIndex] = useState(12);
   const [error, setError] = useState<string | null>(null);
+  const { frame: radarFrame, status: radarStatus } = useRadarFrame(radarEnabled && replay ? replay.frames[activeIndex]?.offset_minutes ?? null : null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -300,6 +318,56 @@ function App() {
     };
 
     void loadData();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setVerification(null);
+    setVerificationError(null);
+    const source = forecastMode === "LEARNED" ? "SEVIR" : "SYNTHETIC";
+    const loadVerification = async () => {
+      try {
+        const response = await fetch(`/api/v1/replay/verification?source=${source}`);
+        if (!response.ok) throw new Error(`Verification unavailable (${response.status}).`);
+        if (!cancelled) setVerification((await response.json()) as VerificationReport);
+      } catch (caught) {
+        if (!cancelled) setVerificationError(caught instanceof Error ? caught.message : "Verification unavailable.");
+      }
+    };
+    void loadVerification();
+    return () => { cancelled = true; };
+  }, [forecastMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsochrones(null);
+    const load = async () => {
+      const response = await fetch(`/api/v1/replay/isochrones?forecast_mode=${forecastMode}`);
+      if (response.ok && !cancelled) setIsochrones((await response.json()) as IsochroneReport);
+    };
+    void load().catch(() => { if (!cancelled) setIsochrones(null); });
+    return () => { cancelled = true; };
+  }, [forecastMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIntensification(null);
+    const load = async () => {
+      const response = await fetch(`/api/v1/replay/intensification?frame_index=${activeIndex}&forecast_mode=${forecastMode}`);
+      if (response.ok && !cancelled) setIntensification((await response.json()) as IntensificationReport);
+    };
+    void load().catch(() => { if (!cancelled) setIntensification(null); });
+    return () => { cancelled = true; };
+  }, [activeIndex, forecastMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const response = await fetch("/api/v1/replay/imd-bridge");
+      if (response.ok && !cancelled) setImdBridge((await response.json()) as IMDBridgeStatus);
+    };
+    void load().catch(() => { if (!cancelled) setImdBridge(null); });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
@@ -404,76 +472,73 @@ function App() {
   const etaLabel = computedEta !== undefined
     ? `T+${computedEta.toFixed(1)}m`
     : alreadyArrived ? "ARRIVED" : etaNotComputable || forecastMode === "LEARNED" ? "N/C" : queryResult?.status === "COMPUTED" ? "UNKNOWN" : "N/A";
+  const verificationLabel = verification?.source === "SEVIR" ? "SEVIR FLOW BENCHMARK / NOT CONVLSTM" : "SIMULATED REPLAY BENCHMARK";
+  const verificationDetail = verification
+    ? `${verification.method} / ${verification.field} >= ${verification.threshold} ${verification.threshold_unit} / ${verification.observation_source} / T+${verification.leads.map((lead) => lead.lead_minutes).join(",") || "NONE"}`
+    : verificationError ?? "Replay verification loading";
+  const intensityCell = intensification?.cells[0] ?? null;
+  const rapidIntensification = intensityCell?.tag === "RAPID_INTENSIFICATION";
 
   const runPointQuery = async () => {
     if (!replay) return;
+    const generation = ++queryGeneration.current;
     setQueryResult(null);
     setQueryError(null);
+    setNeighborhoodCells([]);
+    setImpactDrawer(null);
     setQuerying(true);
+    const locationName = locationNameFor(selectedPoint);
     try {
-      const response = await fetch("/api/v1/location/query", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          geometry_type: "POINT",
-          geometry: { longitude: selectedPoint.lon, latitude: selectedPoint.lat },
+      const pointResult = await submitLocationQuery({
+        geometry_type: "POINT",
+        geometry: { longitude: selectedPoint.lon, latitude: selectedPoint.lat },
+        coordinate_reference_system: "EPSG:4326",
+        name: locationName,
+        source_of_location: "MAP_CLICK",
+        issue_time: replay.issue_time,
+        horizon_minutes: replay.horizon_minutes,
+        forecast_mode: forecastMode,
+      });
+      if (generation !== queryGeneration.current) return;
+      setQueryResult(pointResult);
+
+      const cells = createNeighborhood(selectedPoint);
+      if (forecastMode === "LEARNED" || pointResult.status === "NOT_COMPUTABLE") {
+        setNeighborhoodCells(cells.map((cell) => ({ ...cell, status: "NOT_COMPUTABLE", result: null })));
+      } else {
+        setNeighborhoodCells(cells.map((cell) => ({ ...cell, status: "LOADING", result: null })));
+        const outcomes = await Promise.allSettled(cells.map((cell) => submitLocationQuery({
+          geometry_type: "POLYGON",
+          geometry: { vertices: squarePolygon(cell.center) },
           coordinate_reference_system: "EPSG:4326",
-          name: selectedPoint === initialPoint ? "Jaydev Vihar" : "Selected map point",
-          source_of_location: "MAP_CLICK",
+          name: `${cell.label} 1 km neighborhood cell`,
+          source_of_location: "MAP_NEIGHBORHOOD_MATRIX",
           issue_time: replay.issue_time,
           horizon_minutes: replay.horizon_minutes,
-          forecast_mode: forecastMode,
-        }),
-      });
-      if (!response.ok) throw new Error(`Location query failed (${response.status}).`);
-      setQueryResult((await response.json()) as LocationQueryResult);
+          forecast_mode: "BASELINE",
+        })));
+        if (generation !== queryGeneration.current) return;
+        setNeighborhoodCells(cells.map((cell, index) => {
+          const outcome = outcomes[index];
+          return outcome.status === "fulfilled"
+            ? { ...cell, status: outcome.value.status, result: outcome.value }
+            : { ...cell, status: "ERROR", result: null, error: outcome.reason instanceof Error ? outcome.reason.message : "Query failed" };
+        }));
+      }
     } catch (caught) {
-      setQueryError(caught instanceof Error ? caught.message : "Location query failed.");
+      if (generation === queryGeneration.current) setQueryError(caught instanceof Error ? caught.message : "Location query failed.");
     } finally {
-      setQuerying(false);
+      if (generation === queryGeneration.current) setQuerying(false);
     }
   };
 
   return (
-    <main className="min-h-screen bg-[#020617] text-slate-100 xl:h-screen xl:overflow-hidden">
-      <div className="flex min-h-screen xl:h-full">
-        <aside className="flex w-[76px] shrink-0 flex-col items-center border-r border-cyan-900/30 bg-slate-950/80 py-4 backdrop-blur-xl">
-          <div className="mb-8 grid h-12 w-12 place-items-center border border-cyan-500/50 bg-cyan-950/20 shadow-[0_0_16px_rgba(0,240,255,0.18)]">
-            <Shield className="h-7 w-7 text-[#00F0FF]" />
-          </div>
-          <nav className="flex flex-1 flex-col gap-3">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  key={item.label}
-                  type="button"
-                  title={item.label}
-                  aria-label={item.label}
-                  className={`grid h-12 w-12 place-items-center border transition ${
-                    item.active
-                      ? "border-cyan-400/70 bg-cyan-950/30 text-[#00F0FF] shadow-[0_0_10px_rgba(0,240,255,0.2)]"
-                      : "border-slate-800 bg-slate-900/40 text-slate-500 hover:border-cyan-900/60 hover:text-slate-200"
-                  }`}
-                >
-                  <Icon className="h-5 w-5" />
-                </button>
-              );
-            })}
-          </nav>
-          <div className="flex flex-col items-center gap-2">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-[#39FF14] shadow-[0_0_10px_rgba(57,255,20,0.8)]" />
-            <span className="font-mono text-[8px] font-bold uppercase tracking-[0.2em] text-emerald-300 [writing-mode:vertical-rl]">
-              System secure
-            </span>
-          </div>
-        </aside>
-
-        <section className="flex min-w-0 flex-1 flex-col">
+    <main className="min-h-screen bg-[#090d16] text-slate-100 xl:h-screen xl:overflow-hidden">
+        <section className="flex min-h-screen min-w-0 flex-1 flex-col xl:h-full">
           <header className="flex min-h-[86px] shrink-0 flex-wrap items-center gap-3 border-b border-cyan-900/30 bg-slate-950/50 px-5 py-3 backdrop-blur-xl">
             <div className="mr-auto min-w-[260px]">
               <div className="flex items-center gap-3">
-                <Radar className="h-6 w-6 text-[#00F0FF]" />
+                <Radar className="h-6 w-6 text-cyan-300" />
                 <h1 className="text-xl font-black uppercase tracking-[0.3em] text-slate-100">VAJRA</h1>
                 <StatusTag>{forecastMode === "LEARNED" ? "LEARNED / UNVALIDATED" : telemetry?.evidence_status ?? "LOADING"}</StatusTag>
               </div>
@@ -481,9 +546,10 @@ function App() {
                 {forecastMode === "LEARNED" ? "SEVIR VIL learned replay / U.S. benchmark / pixel space" : `Location-first convective intelligence / ${replay?.region ?? "event bundle loading"}`}
               </p>
             </div>
-            <HudMetric icon={Gauge} label="CSI Score" value={formatMetric(telemetry?.csi)} unit="NOT EVALUATED" />
-            <HudMetric icon={Activity} label="POD Matrix" value={formatMetric(telemetry?.pod)} unit="NOT EVALUATED" />
+            <HudMetric icon={Gauge} label="CSI Score" value={verification?.status === "COMPUTED" ? formatMetric(verification.csi) : "--"} unit={verification?.source === "SEVIR" ? "SEVIR FLOW" : verification ? "SIM REPLAY" : "UNVALIDATED"} title={verificationDetail} tone="amber" />
+            <HudMetric icon={Activity} label="POD Matrix" value={verification?.status === "COMPUTED" ? formatMetric(verification.pod) : "--"} unit="UNVALIDATED" title={verificationDetail} tone="amber" />
             <HudMetric icon={Crosshair} label="Target Horizon" value={forecastMode === "LEARNED" ? "60" : telemetry ? String(telemetry.horizon_minutes) : "---"} unit="MIN" />
+            <HudMetric icon={Activity} label="Intensity Delta" value={intensityCell ? `${intensityCell.rate_dbz_per_hour >= 0 ? "+" : ""}${intensityCell.rate_dbz_per_hour.toFixed(1)}` : "N/C"} unit={rapidIntensification ? "dBZ/HR / RAPID" : "dBZ/HR"} title={intensification ? `${intensification.method} / ${intensification.evidence_status} / ${intensification.observation_role} / threshold >${intensification.threshold_dbz_per_hour} dBZ/hr` : "No adjacent observed cell frames"} tone={rapidIntensification ? "amber" : "cyan"} />
             {forecastMode === "LEARNED" ? (
               <HudMetric icon={Cpu} label="Model" value={learnedForecast ? "LOADED" : "---"} unit="UNVALIDATED" tone="amber" />
             ) : (
@@ -495,24 +561,38 @@ function App() {
                 tone="emerald"
               />
             )}
+            <button type="button" onClick={() => setScorecardOpen(true)} className="h-10 shrink-0 border border-cyan-700/70 bg-cyan-950/30 px-3 text-[11px] font-semibold text-cyan-100 hover:bg-cyan-900/40">WMO Scorecard</button>
           </header>
 
+          <nav aria-label="Operational workspaces" className="flex shrink-0 gap-1 overflow-x-auto border-b border-slate-700 bg-[#0f172a] px-4 py-2">
+            {workspaces.map((item) => { const Icon = item.icon; return <button key={item.id} type="button" aria-current={workspace === item.id ? "page" : undefined} onClick={() => { setWorkspace(item.id); setPlaying(false); }} className={`flex shrink-0 items-center gap-2 border px-3 py-2 text-[11px] font-semibold transition-colors ${workspace === item.id ? "border-cyan-700 bg-cyan-900/30 text-cyan-100" : "border-transparent text-slate-400 hover:border-slate-700 hover:text-slate-100"}`}><Icon size={15} />{item.label}</button>; })}
+          </nav>
+
           {error ? (
-            <div className="m-4 border border-[#FF003C]/50 bg-red-950/20 p-4 font-mono text-sm text-red-200">
+            <div className="m-4 border border-rose-800 bg-rose-950/20 p-4 font-mono text-sm text-rose-200">
               BACKEND DEGRADED: {error}
             </div>
           ) : null}
 
-          <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_360px] xl:grid-rows-[minmax(0,1fr)_270px]">
+          {workspace === "spatial" ? <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_360px] xl:grid-rows-[minmax(0,1fr)_270px]">
             <Panel className="relative min-h-[430px] overflow-hidden xl:col-span-1 xl:row-span-1 xl:min-h-0">
               <div className="absolute left-4 top-4 z-[500] flex items-center gap-3 border border-cyan-900/40 bg-slate-950/85 px-3 py-2 backdrop-blur-xl">
-                <MapPinned className="h-4 w-4 text-[#00F0FF]" />
+                <MapPinned className="h-4 w-4 text-cyan-300" />
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">{forecastMode === "LEARNED" ? "SEVIR / Predicted VIL" : "GIS / Replay Observation"}</p>
                   <p className="font-mono text-xs text-cyan-100">
                     {forecastMode === "LEARNED" ? "AI FIELD: PIXEL SPACE ONLY" : activeCell ? `${activeCell.centroid.lat.toFixed(3)} / ${activeCell.centroid.lon.toFixed(3)}` : "NO FRAME"}
                   </p>
                 </div>
+                {forecastMode === "BASELINE" ? <button type="button" title="Toggle forecast isochrone bands" aria-label="Toggle forecast isochrone bands" aria-pressed={showIsochrones} onClick={() => setShowIsochrones((shown) => !shown)} className={`border p-1.5 ${showIsochrones ? "border-cyan-500/60 text-cyan-200" : "border-slate-700 text-slate-500"}`}><Layers3 className="h-4 w-4" /></button> : null}
+              </div>
+              {forecastMode === "BASELINE" && isochrones?.status === "COMPUTED" && showIsochrones ? (
+                <div className="pointer-events-none absolute left-4 top-[74px] z-[500] border border-cyan-900/40 bg-slate-950/90 px-2 py-1 font-mono text-[9px] text-slate-200">
+                  <span className="mr-2 text-red-300">T+10</span><span className="mr-2 text-amber-300">T+20</span><span className="text-cyan-300">T+30</span><span className="ml-2 text-slate-500">SWEPT / SIMULATED</span>
+                </div>
+              ) : null}
+              <div className="pointer-events-none absolute right-4 top-[72px] z-[500] max-w-[45%] border border-amber-500/30 bg-slate-950/90 px-2 py-1 text-right font-mono text-[9px] text-amber-200 lg:top-4">
+                {forecastMode === "LEARNED" ? "VIL_ONLY_FALLBACK / NO WGS84 ETA" : queryResult?.status === "NOT_COMPUTABLE" ? "NOT_COMPUTABLE / LOCATION GATED" : "SIMULATED / WGS84"}
               </div>
 
               {forecastMode === "LEARNED" ? (
@@ -521,43 +601,67 @@ function App() {
                   {learnedForecast?.frames[learnedIndex] ? (
                     <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 96 96" preserveAspectRatio="none" aria-label="Tracked predicted cells">
                       {learnedForecast.frames[learnedIndex].cells.map((cell) => (
-                        <circle key={cell.cell_id} cx={cell.centroid_x} cy={cell.centroid_y} r={cell.radius_pixels} fill="none" stroke="#fbbf24" strokeWidth="0.6" />
+                        <circle key={cell.cell_id} cx={cell.centroid_x} cy={cell.centroid_y} r={cell.radius_pixels} fill="transparent" stroke="#fbbf24" strokeWidth="0.6" style={{ pointerEvents: "auto" }} onMouseEnter={() => setHoveredLearnedCell(cell)} onMouseLeave={() => setHoveredLearnedCell(null)} />
                       ))}
                     </svg>
+                  ) : null}
+                  {hoveredLearnedCell ? (
+                    <div className="pointer-events-none absolute z-[450] w-[220px] border border-amber-500/50 bg-slate-950/95 p-2 font-mono text-[10px] text-slate-200" style={{ left: `${Math.min(68, hoveredLearnedCell.centroid_x / 96 * 100)}%`, top: `${Math.max(20, Math.min(70, hoveredLearnedCell.centroid_y / 96 * 100))}%` }}>
+                      <p className="font-bold text-amber-300">{hoveredLearnedCell.cell_id}</p>
+                      <p>VIL / {learnedForecast?.model_version}</p>
+                      <p>PIXEL {hoveredLearnedCell.centroid_x.toFixed(1)}, {hoveredLearnedCell.centroid_y.toFixed(1)} / R {hoveredLearnedCell.radius_pixels.toFixed(1)} PX</p>
+                      <p>LEARNED_FORECAST / VIL_ONLY_FALLBACK</p>
+                      <p className="text-amber-300">NOT_COMPUTABLE / NO WGS84 ETA</p>
+                    </div>
                   ) : null}
                 </div>
               ) : (
               <MapContainer center={[20.3, 85.82]} zoom={9} scrollWheelZoom className="z-0">
                 <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" subdomains={["a", "b", "c"]} />
-                <MapClickSelector onSelect={(point) => { setSelectedPoint(point); setQueryResult(null); setQueryError(null); }} />
-                {forecastMode === "BASELINE" && track.length > 1 ? <Polyline positions={track} pathOptions={{ color: "#00F0FF", weight: 2, opacity: 0.9 }} /> : null}
-                {forecastMode === "BASELINE" && forecastTrack.length > 1 ? <Polyline positions={forecastTrack} pathOptions={{ color: "#fbbf24", weight: 2, opacity: 0.9, dashArray: "6 8" }} /> : null}
+                {radarEnabled && radarFrame?.offset_minutes === activeFrame?.offset_minutes ? <RadarFieldLayer frame={radarFrame} opacity={radarOpacity} /> : null}
+                <MapClickSelector onSelect={(point) => { queryGeneration.current += 1; setSelectedPoint(point); setQuerying(false); setQueryResult(null); setQueryError(null); setNeighborhoodCells([]); setImpactDrawer(null); }} />
+                {showIsochrones && isochrones?.status === "COMPUTED" ? <IsochroneMapBands report={isochrones} /> : null}
+                {forecastMode === "BASELINE" && track.length > 1 ? <Polyline positions={track} pathOptions={{ color: "#67e8f9", weight: 2, opacity: 0.9 }}><TacticalMapTooltip title="OBSERVED TRACK" rows={[`EVENT ${replay?.event_id ?? "--"}`, "METHOD: SYNTHETIC_REPLAY_OBSERVATION", "EVIDENCE: SIMULATED", `FRAMES: ${visibleFrames.length}`]} /></Polyline> : null}
+                {forecastMode === "BASELINE" && forecastTrack.length > 1 ? <Polyline positions={forecastTrack} pathOptions={{ color: "#fbbf24", weight: 2, opacity: 0.9, dashArray: "6 8" }}><TacticalMapTooltip title="BASELINE TRAJECTORY" rows={[`METHOD: ${baseline?.method ?? "--"}`, "EVIDENCE: SIMULATED", "HORIZON: T+5 TO T+60 MIN", "NO GROWTH / DECAY"]} /></Polyline> : null}
                 {forecastMode === "BASELINE" ? baseline?.current_cells.map((cell) => (
                   <Polygon
                     key={cell.cell_id}
                     positions={cell.polygon.map((point) => [point.lat, point.lon])}
                     pathOptions={{ color: "#fbbf24", fillColor: "#fbbf24", fillOpacity: 0.08, weight: 1.5, dashArray: "4 4" }}
-                  />
+                  >
+                    <TacticalMapTooltip title={`TRACKED CELL ${cell.cell_id}`} rows={["DETECT: QC + >=30 dBZ COMPONENTS", "TRACK: COST-MATRIX ASSIGNMENT", "EVIDENCE: SIMULATED", `PEAK: ${cell.max_reflectivity_dbz.toFixed(1)} dBZ`, `AREA: ${cell.area_km2?.toFixed(1) ?? "--"} KM2`, `QC GRID REMOVED: ${cell.qc_removed_pixels ?? "--"} PX`, `CENTER: ${cell.centroid.lat.toFixed(4)}, ${cell.centroid.lon.toFixed(4)}`]} />
+                  </Polygon>
                 )) : null}
                 {forecastMode === "BASELINE" && activeCell ? (
                   <CircleMarker
                     center={[activeCell.centroid.lat, activeCell.centroid.lon]}
                     radius={15}
-                    pathOptions={{ color: "#FF003C", fillColor: "#FF003C", fillOpacity: 0.18, weight: 2 }}
-                  />
+                    pathOptions={{ color: "#fb7185", fillColor: "#fb7185", fillOpacity: 0.18, weight: 2 }}
+                  >
+                    <TacticalMapTooltip title={`OBSERVATION ${activeCell.cell_id}`} rows={[`FRAME: ${activeFrame?.frame_id ?? "--"}`, `VALID: ${activeFrame?.valid_time ?? "--"}`, `PEAK: ${activeCell.max_reflectivity_dbz.toFixed(1)} dBZ`, "METHOD: SYNTHETIC_REPLAY_OBSERVATION", "EVIDENCE: SIMULATED"]} />
+                  </CircleMarker>
                 ) : null}
+                {triageReport && triageReport.issue_time === replay?.issue_time ? triageReport.assets.map((asset) => (
+                  <CircleMarker key={asset.asset_id} center={[asset.centroid.lat, asset.centroid.lon]} radius={5} pathOptions={{ color: asset.eta_status === "COMPUTED" || asset.eta_status === "ARRIVED" ? "#fb7185" : "#67e8f9", fillOpacity: 0.6, weight: 1.5 }}>
+                    <TacticalMapTooltip title={asset.name.toUpperCase()} rows={[`ASSET: ${asset.asset_id}`, `ETA: ${asset.eta_minutes !== null ? `T+${asset.eta_minutes.toFixed(1)} MIN` : asset.eta_status}`, `EVIDENCE: ${asset.result.evidence_status}`, `METHOD: ${triageReport.method}`]} />
+                  </CircleMarker>
+                )) : null}
                 <CircleMarker
                   center={[selectedPoint.lat, selectedPoint.lon]}
                   radius={7}
-                  pathOptions={{ color: "#39FF14", fillColor: "#39FF14", fillOpacity: 0.35, weight: 2 }}
-                />
+                  pathOptions={{ color: "#34d399", fillColor: "#34d399", fillOpacity: 0.35, weight: 2 }}
+                >
+                  <TacticalMapTooltip title="LOCATION QUERY POINT" rows={[`WGS84: ${selectedPoint.lat.toFixed(5)}, ${selectedPoint.lon.toFixed(5)}`, `INTERSECTION: ${queryIntersection}`, `ETA: ${etaLabel}`, "METHOD: STRICT_SPATIAL_INTERSECTION"]} />
+                </CircleMarker>
               </MapContainer>
               )}
+
+              {forecastMode === "BASELINE" ? <LayerController radarEnabled={radarEnabled} onRadarEnabled={setRadarEnabled} opacity={radarOpacity} onOpacity={setRadarOpacity} radarStatus={radarEnabled ? radarStatus : "SIMULATED REPLAY AVAILABLE"} /> : null}
 
               <div className="radar-grid pointer-events-none absolute inset-0 z-[400] opacity-70" />
               <div className="pointer-events-none absolute inset-x-1/2 top-0 z-[410] h-full border-l border-cyan-300/20" />
               <div className="pointer-events-none absolute inset-y-1/2 left-0 z-[410] w-full border-t border-cyan-300/20" />
-              {forecastMode === "BASELINE" ? <div className="pointer-events-none absolute left-1/2 top-1/2 z-[420] h-24 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-300/30 shadow-[0_0_30px_rgba(0,240,255,0.16)]" /> : null}
+              {forecastMode === "BASELINE" ? <div className="pointer-events-none absolute left-1/2 top-1/2 z-[420] h-24 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full border border-cyan-300/30" /> : null}
 
               <div className="absolute inset-x-4 bottom-4 z-[500] border border-cyan-900/40 bg-slate-950/90 p-3 backdrop-blur-xl">
                 <div className="flex items-center gap-3">
@@ -589,8 +693,8 @@ function App() {
             <Panel className="flex min-h-0 flex-col gap-4 overflow-y-auto p-4 xl:row-span-2">
               <SectionHeader icon={Route} label="Location Query" status={forecastMode === "LEARNED" ? "VIL-only / unvalidated" : "Simulated baseline"} />
               <div className="grid grid-cols-2 border border-cyan-900/30 bg-slate-950/50 p-1" role="group" aria-label="Forecast model">
-                <button type="button" aria-pressed={forecastMode === "BASELINE"} onClick={() => { setForecastMode("BASELINE"); setPlaying(false); setQueryResult(null); setQueryError(null); }} className={`px-2 py-2 text-[10px] font-bold uppercase text-center ${forecastMode === "BASELINE" ? "bg-cyan-950/70 text-[#00F0FF]" : "text-slate-500"}`}>Baseline</button>
-                <button type="button" aria-pressed={forecastMode === "LEARNED"} onClick={() => { setForecastMode("LEARNED"); setPlaying(false); setQueryResult(null); setQueryError(null); }} className={`px-2 py-2 text-[10px] font-bold uppercase text-center ${forecastMode === "LEARNED" ? "bg-amber-950/50 text-amber-300" : "text-slate-500"}`}>ConvLSTM</button>
+                <button type="button" aria-pressed={forecastMode === "BASELINE"} onClick={() => { queryGeneration.current += 1; setForecastMode("BASELINE"); setPlaying(false); setQuerying(false); setQueryResult(null); setQueryError(null); setNeighborhoodCells([]); setImpactDrawer(null); }} className={`px-2 py-2 text-[10px] font-bold uppercase text-center ${forecastMode === "BASELINE" ? "bg-cyan-950/70 text-[#00F0FF]" : "text-slate-500"}`}>Baseline</button>
+                <button type="button" aria-pressed={forecastMode === "LEARNED"} onClick={() => { queryGeneration.current += 1; setForecastMode("LEARNED"); setPlaying(false); setQuerying(false); setQueryResult(null); setQueryError(null); setNeighborhoodCells([]); setImpactDrawer(null); }} className={`px-2 py-2 text-[10px] font-bold uppercase text-center ${forecastMode === "LEARNED" ? "bg-amber-950/50 text-amber-300" : "text-slate-500"}`}>ConvLSTM</button>
               </div>
               <div className="border border-cyan-900/30 bg-slate-950/40 p-4">
                 <div className="flex items-start justify-between gap-3">
@@ -611,13 +715,47 @@ function App() {
                   disabled={!replay || querying}
                   className="mt-4 flex w-full items-center justify-center gap-2 border border-cyan-400/60 bg-cyan-950/30 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-100 transition hover:bg-cyan-900/30 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  <Crosshair className="h-4 w-4" /> {querying ? "Calculating" : forecastMode === "LEARNED" ? "Check learned location" : "Query baseline footprint"}
+                  <Crosshair className="h-4 w-4" /> {querying ? "Calculating" : forecastMode === "LEARNED" ? "Check learned location" : "Query point + 3x3 neighborhood"}
                 </button>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <IntelStat label="Intersection" value={queryIntersection} tone={forecastMode === "LEARNED" ? "amber" : "emerald"} />
                 <IntelStat label="ETA" value={etaLabel} tone={forecastMode === "LEARNED" ? "amber" : "emerald"} />
+              </div>
+
+              {queryResult ? (
+                <div className="flex items-center justify-between gap-3 border border-slate-800 bg-slate-950/40 px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-slate-500">Location briefing</p>
+                    <p className="mt-1 truncate font-mono text-[10px] text-slate-200">{queryResult.evidence_status} / {queryResult.status} / {queryResult.impacts.length} impacts</p>
+                  </div>
+                  <button type="button" onClick={() => setImpactDrawer({ name: locationNameFor(selectedPoint), coordinates: selectedPoint, result: queryResult })} className="flex shrink-0 items-center gap-1.5 border border-cyan-800/60 px-2 py-1.5 font-mono text-[9px] font-bold uppercase text-cyan-200 hover:bg-cyan-950/40">
+                    <PanelRightOpen className="h-3.5 w-3.5" /> Inspect report
+                  </button>
+                </div>
+              ) : null}
+
+              <LocationNeighborhoodMatrix
+                cells={neighborhoodCells}
+                onInspect={(cell) => cell.result && setImpactDrawer({ name: `${cell.label} neighborhood cell`, coordinates: cell.center, result: cell.result })}
+              />
+
+              <ThreatTriageBoard
+                issueTime={replay?.issue_time ?? null}
+                horizonMinutes={replay?.horizon_minutes ?? 60}
+                forecastMode={forecastMode}
+                onReport={setTriageReport}
+                onInspect={(asset) => setImpactDrawer({ name: asset.name, coordinates: asset.centroid, result: asset.result })}
+              />
+
+              <div className={`border p-3 ${rapidIntensification ? "border-red-500/50 bg-red-950/20" : "border-slate-800 bg-slate-950/40"}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">Rapid intensification / RID</p>
+                  <span className={`font-mono text-[9px] ${rapidIntensification ? "text-red-300" : "text-amber-300"}`}>{rapidIntensification ? "RAPID_INTENSIFICATION" : intensification?.status ?? "LOADING"}</span>
+                </div>
+                <p className="mt-2 font-mono text-sm text-slate-100">Calculated Intensity Delta: {intensityCell ? `${intensityCell.rate_dbz_per_hour >= 0 ? "+" : ""}${intensityCell.rate_dbz_per_hour.toFixed(1)} dBZ/hr` : "NOT_COMPUTABLE"}</p>
+                <p className="mt-1 break-words font-mono text-[9px] text-slate-500">{intensification ? `${intensification.method} / ${intensification.evidence_status} / ${intensification.observation_role} / >${intensification.threshold_dbz_per_hour} dBZ/hr` : "ADJACENT OBSERVATION REQUIRED"}</p>
               </div>
 
               <div className="border border-slate-800 bg-slate-950/40 p-3">
@@ -706,6 +844,14 @@ function App() {
 
               <SectionHeader icon={CloudLightning} label="Sources / Model Registry" status={baseline?.evidence_status ?? "LOADING"} />
               <div className="min-h-0 flex-1 overflow-y-auto border border-slate-800 bg-slate-950/40">
+                {imdBridge ? (
+                  <details className="border-b border-amber-500/30 bg-amber-950/10 px-3 py-2 font-mono text-[10px]">
+                    <summary className="cursor-pointer text-amber-200">IMD DWR / MOSDAC API [{imdBridge.state.replaceAll("_", " ")}]</summary>
+                    <p className="mt-2 text-slate-400">DISCONNECTED / NO AUTHORIZED PRODUCT</p>
+                    <ol className="mt-2 space-y-1 text-slate-400">{imdBridge.pipeline_steps.map((step, index) => <li key={step}>{index + 1}. {step}</li>)}</ol>
+                    <p className="mt-2 text-amber-300">{imdBridge.required_gates.join(" / ")}</p>
+                  </details>
+                ) : null}
                 {modalities ? <div className="border-b border-cyan-900/30 bg-cyan-950/10 px-3 py-2 font-mono text-[10px] text-cyan-200">{modalities.fusion_mode.replaceAll("_", " ")} / INPUT {modalities.model_input_channels.join(", ")}</div> : null}
                 {modalities?.modalities.map((modality) => (
                   <div key={modality.source_id} className="border-b border-slate-800 px-3 py-2">
@@ -718,7 +864,7 @@ function App() {
                 ))}
                 {replay?.sources.map((source) => (
                   <div key={source.source_id} className="flex items-center gap-3 border-b border-slate-800 px-3 py-3 last:border-b-0">
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${source.availability === "AVAILABLE" ? "bg-[#39FF14] shadow-[0_0_8px_rgba(57,255,20,0.6)]" : "bg-amber-400"}`} />
+                    <span className={`h-2 w-2 shrink-0 rounded-full ${source.availability === "AVAILABLE" ? "bg-emerald-400" : "bg-amber-400"}`} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[11px] font-bold uppercase text-slate-200">{source.name}</p>
                       <p className="mt-1 font-mono text-[10px] text-slate-500">{source.modality} / {source.quality_status}</p>
@@ -728,7 +874,7 @@ function App() {
                 ))}
                 {modelArtifacts.map((model) => (
                   <div key={model.model_id} className="flex items-center gap-3 border-b border-slate-800 px-3 py-3 last:border-b-0">
-                    <span className="h-2 w-2 shrink-0 bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,0.45)]" />
+                    <span className="h-2 w-2 shrink-0 bg-amber-300" />
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-mono text-[11px] font-bold uppercase text-slate-200">{model.model_id}</p>
                       <p className="mt-1 truncate font-mono text-[10px] text-slate-500">
@@ -744,7 +890,8 @@ function App() {
             <Panel className="grid min-h-[260px] grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_420px] xl:min-h-0">
               <div className="min-w-0">
                 <SectionHeader icon={BarChart3} label={forecastMode === "LEARNED" ? "Simulated India Replay" : "Observed Replay Fields"} status="Backend event bundle" />
-                <div className="mt-4 h-[188px]">
+                <p className="mt-2 truncate font-mono text-[10px] text-amber-300" title={verificationDetail}>{verificationLabel} / {verification?.status ?? (verificationError ? "UNVALIDATED" : "CALCULATING")} / {verification?.forecast_validation_status ?? "UNVALIDATED"} / {verification?.leads.length ?? 0} LEADS</p>
+                <div className="mt-2 h-[170px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={chartData}>
                       <defs>
@@ -753,8 +900,8 @@ function App() {
                           <stop offset="95%" stopColor="#00F0FF" stopOpacity={0} />
                         </linearGradient>
                         <linearGradient id="rainGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#FF003C" stopOpacity={0.45} />
-                          <stop offset="95%" stopColor="#FF003C" stopOpacity={0} />
+                          <stop offset="5%" stopColor="#fb7185" stopOpacity={0.35} />
+                          <stop offset="95%" stopColor="#fb7185" stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid stroke="rgba(8,145,178,0.18)" strokeDasharray="3 6" />
@@ -762,7 +909,7 @@ function App() {
                       <YAxis stroke="#64748b" tick={{ fontSize: 10, fontFamily: "monospace" }} />
                       <Tooltip contentStyle={{ background: "rgba(2,6,23,0.94)", border: "1px solid rgba(8,145,178,0.35)", borderRadius: 0, color: "#e2e8f0", fontFamily: "monospace" }} />
                       <Area type="monotone" dataKey="reflectivity" name="Reflectivity dBZ" stroke="#00F0FF" fill="url(#reflectivityGradient)" strokeWidth={2} />
-                      <Area type="monotone" dataKey="rain" name="Rain rate mm/h" stroke="#FF003C" fill="url(#rainGradient)" strokeWidth={2} />
+                      <Area type="monotone" dataKey="rain" name="Rain rate mm/h" stroke="#fb7185" fill="url(#rainGradient)" strokeWidth={2} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
@@ -775,7 +922,7 @@ function App() {
                 </div>
                 <div className="h-[196px] overflow-y-auto p-3 font-mono text-[11px] leading-5">
                   {terminalLines.map((line, index) => (
-                    <p key={`${line.ts}-${index}`} className={line.level === "WARNING" || line.level === "CRITICAL" ? "text-[#FF003C]" : "text-emerald-300"}>
+                    <p key={`${line.ts}-${index}`} className={line.level === "WARNING" || line.level === "CRITICAL" ? "text-rose-300" : "text-emerald-300"}>
                       <span className="text-slate-500">{line.ts}</span> [{line.source_id.toUpperCase()}] {line.message}
                     </p>
                   ))}
@@ -783,11 +930,89 @@ function App() {
                 </div>
               </div>
             </Panel>
-          </div>
+          </div> : workspace === "verification" ? <DualSplitVerification forecastCells={baseline?.forecast_cells ?? []} currentCells={baseline?.current_cells ?? []} isochrones={isochrones} forecastMode={forecastMode} observedOffsets={replay?.frames.map((frame) => frame.offset_minutes) ?? []} />
+            : workspace === "airfield" ? <AirfieldRunwayTwin />
+            : workspace === "alert" ? <SachetMobileSimulator result={queryResult} location={selectedPoint} place={locationNameFor(selectedPoint)} replayOffset={activeFrame?.offset_minutes ?? 0} forecastMode={forecastMode} />
+            : workspace === "ai" ? <AIPipelineWorkspace artifacts={modelArtifacts} forecast={learnedForecast} modalities={modalities} loadModel={() => { setForecastMode("LEARNED"); setLearnedError(null); }} error={learnedError} />
+            : <DataSourcesWorkspace sources={replay?.sources ?? []} bridge={imdBridge} modalities={modalities} />}
         </section>
-      </div>
+      {impactDrawer ? <LocationImpactDrawer {...impactDrawer} onClose={() => setImpactDrawer(null)} /> : null}
+      {scorecardOpen ? <WmoScorecardModal source={forecastMode === "LEARNED" ? "SEVIR" : "SYNTHETIC"} onClose={() => setScorecardOpen(false)} /> : null}
     </main>
   );
+}
+
+type LocationQueryPayload = {
+  geometry_type: "POINT" | "POLYGON";
+  geometry: { longitude: number; latitude: number } | { vertices: { longitude: number; latitude: number }[] };
+  coordinate_reference_system: "EPSG:4326";
+  name: string;
+  source_of_location: string;
+  issue_time: string;
+  horizon_minutes: number;
+  forecast_mode: "BASELINE" | "LEARNED";
+};
+
+const neighborhoodLayout = [
+  { label: "NW", row: 1, column: -1 }, { label: "N", row: 1, column: 0 }, { label: "NE", row: 1, column: 1 },
+  { label: "W", row: 0, column: -1 }, { label: "C", row: 0, column: 0 }, { label: "E", row: 0, column: 1 },
+  { label: "SW", row: -1, column: -1 }, { label: "S", row: -1, column: 0 }, { label: "SE", row: -1, column: 1 },
+] as const;
+
+function locationNameFor(point: { lat: number; lon: number }) {
+  return point.lat === initialPoint.lat && point.lon === initialPoint.lon ? "Jaydev Vihar" : "Selected map point";
+}
+
+function createNeighborhood(point: { lat: number; lon: number }): LocationNeighborhoodCell[] {
+  const latitudeRadians = point.lat * Math.PI / 180;
+  const eccentricitySquared = 6.69437999014e-3;
+  const primeVertical = 6_378_137 / Math.sqrt(1 - eccentricitySquared * Math.sin(latitudeRadians) ** 2);
+  const meridional = 6_378_137 * (1 - eccentricitySquared) / (1 - eccentricitySquared * Math.sin(latitudeRadians) ** 2) ** 1.5;
+  const metersPerDegreeLongitude = Math.PI / 180 * primeVertical * Math.cos(latitudeRadians);
+  const metersPerDegreeLatitude = Math.PI / 180 * meridional;
+
+  return neighborhoodLayout.map(({ label, row, column }) => ({
+    id: label,
+    label,
+    center: {
+      lat: point.lat + row * 1000 / metersPerDegreeLatitude,
+      lon: point.lon + column * 1000 / metersPerDegreeLongitude,
+    },
+    status: "LOADING" as const,
+    result: null,
+  }));
+}
+
+function squarePolygon(center: { lat: number; lon: number }) {
+  const latitudeRadians = center.lat * Math.PI / 180;
+  const eccentricitySquared = 6.69437999014e-3;
+  const primeVertical = 6_378_137 / Math.sqrt(1 - eccentricitySquared * Math.sin(latitudeRadians) ** 2);
+  const meridional = 6_378_137 * (1 - eccentricitySquared) / (1 - eccentricitySquared * Math.sin(latitudeRadians) ** 2) ** 1.5;
+  const halfLat = 500 / (Math.PI / 180 * meridional);
+  const halfLon = 500 / (Math.PI / 180 * primeVertical * Math.cos(latitudeRadians));
+  const south = center.lat - halfLat;
+  const north = center.lat + halfLat;
+  const west = center.lon - halfLon;
+  const east = center.lon + halfLon;
+  return [
+    { longitude: west, latitude: south },
+    { longitude: east, latitude: south },
+    { longitude: east, latitude: north },
+    { longitude: west, latitude: north },
+  ];
+}
+
+async function submitLocationQuery(payload: LocationQueryPayload): Promise<LocationQueryResult> {
+  const response = await fetch("/api/v1/location/query", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Location query failed (${response.status}): ${detail}`);
+  }
+  return (await response.json()) as LocationQueryResult;
 }
 
 function MapClickSelector({ onSelect }: { onSelect: Dispatch<SetStateAction<{ lat: number; lon: number }>> }) {
@@ -797,6 +1022,33 @@ function MapClickSelector({ onSelect }: { onSelect: Dispatch<SetStateAction<{ la
     },
   });
   return null;
+}
+
+function TacticalMapTooltip({ title, rows }: { title: string; rows: string[] }) {
+  return (
+    <LeafletTooltip sticky direction="top" opacity={1} className="vajra-map-tooltip">
+      <div className="font-mono text-[10px] leading-4">
+        <p className="border-b border-cyan-900/50 pb-1 font-bold tracking-wider text-[#00F0FF]">{title}</p>
+        {rows.map((row) => <p key={row} className="mt-1 text-slate-300">{row}</p>)}
+      </div>
+    </LeafletTooltip>
+  );
+}
+
+function IsochroneMapBands({ report }: { report: IsochroneReport }) {
+  const colorByLead = { 10: "#FF003C", 20: "#fbbf24", 30: "#00F0FF" };
+  return report.bands.flatMap((band) => {
+    const polygons = band.geometry.type === "Polygon" ? [band.geometry.coordinates] : band.geometry.coordinates;
+    return polygons.map((rings, index) => (
+      <Polygon
+        key={`${band.lead_minutes}-${index}`}
+        positions={rings.map((ring) => ring.map(([longitude, latitude]) => [latitude, longitude] as [number, number]))}
+        pathOptions={{ color: colorByLead[band.lead_minutes], fillColor: colorByLead[band.lead_minutes], fillOpacity: 0.13, weight: 1.5, dashArray: "4 5" }}
+      >
+        <TacticalMapTooltip title={`T+${band.lead_minutes} SWEPT FOOTPRINT`} rows={[`AREA: ${band.area_km2.toFixed(2)} KM2`, `METHOD: ${band.method}`, `EVIDENCE: ${band.evidence_status}`, `SOURCE: ${band.source_ids.join(", ")}`, `VALID: ${band.valid_time}`, "INCREMENTAL BAND / NOT IMPACT PROBABILITY"]} />
+      </Polygon>
+    ));
+  });
 }
 
 function GridFieldPreview({ frame, className = "radar-grid mt-3 h-28 overflow-hidden border border-slate-800 bg-[#020617]" }: { frame: { values: number[][] } | null; className?: string }) {
@@ -832,10 +1084,10 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
   );
 }
 
-function HudMetric({ icon: Icon, label, value, unit, tone = "cyan" }: { icon: typeof Gauge; label: string; value: string; unit: string; tone?: "cyan" | "emerald" | "amber" }) {
+function HudMetric({ icon: Icon, label, value, unit, title, tone = "cyan" }: { icon: typeof Gauge; label: string; value: string; unit: string; title?: string; tone?: "cyan" | "emerald" | "amber" }) {
   const color = tone === "emerald" ? "text-[#39FF14]" : tone === "amber" ? "text-amber-300" : "text-[#00F0FF]";
   return (
-    <div className="flex h-14 min-w-[148px] items-center gap-3 border border-cyan-900/30 bg-slate-900/40 px-3 backdrop-blur-xl">
+    <div title={title} className="flex h-14 min-w-[148px] items-center gap-3 border border-cyan-900/30 bg-slate-900/40 px-3 backdrop-blur-xl">
       <Icon className={`h-4 w-4 ${color}`} />
       <div className="min-w-0">
         <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">{label}</p>
@@ -864,8 +1116,7 @@ function SectionHeader({ icon: Icon, label, status }: { icon: typeof Radar; labe
         <h2 className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">{label}</h2>
       </div>
       <div className="flex items-center gap-2">
-        <LockKeyhole className="h-3 w-3 text-emerald-300" />
-        <span className="font-mono text-[10px] uppercase text-emerald-300">{status}</span>
+        <span className="font-mono text-[10px] uppercase text-slate-400">{status}</span>
       </div>
     </div>
   );

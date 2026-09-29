@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.api.location import router as location_router
+from backend.app.api.airfield import router as airfield_router
 from backend.app.api.models import router as models_router
 from backend.app.api.replay import router as replay_router
 from backend.app.core.config import settings
@@ -21,6 +22,7 @@ app.add_middleware(
 )
 
 app.include_router(location_router, prefix="/api/v1/location", tags=["location-intelligence"])
+app.include_router(airfield_router, prefix="/api/v1/airfield", tags=["airfield-simulator"])
 app.include_router(replay_router, prefix="/api/v1/replay", tags=["data-replay"])
 app.include_router(models_router, prefix="/api/v1/models", tags=["model-registry"])
 

@@ -48,6 +48,16 @@ def categorical_scores(table: ContingencyTable) -> CategoricalScores:
         + (table.hits + table.false_alarms)
         * (table.false_alarms + table.correct_negatives)
     )
+    return CategoricalScores(
+        csi=_divide(table.hits, csi_denominator),
+        pod=_divide(table.hits, event_observation_total),
+        far=_divide(table.false_alarms, event_forecast_total),
+        frequency_bias=_divide(event_forecast_total, event_observation_total),
+        heidke_skill_score=_divide(
+            2 * (table.hits * table.correct_negatives - table.misses * table.false_alarms),
+            hss_denominator,
+        ) if total else None,
+    )
 
 
 def equitable_threat_score(table: ContingencyTable) -> float | None:
@@ -63,20 +73,6 @@ def equitable_threat_score(table: ContingencyTable) -> float | None:
     )
     denominator = table.hits + table.misses + table.false_alarms - random_hits
     return (table.hits - random_hits) / denominator if denominator else None
-    return CategoricalScores(
-        csi=_divide(table.hits, csi_denominator),
-        pod=_divide(table.hits, event_observation_total),
-        far=_divide(table.false_alarms, event_forecast_total),
-        frequency_bias=_divide(event_forecast_total, event_observation_total),
-        heidke_skill_score=_divide(
-            2
-            * (
-                table.hits * table.correct_negatives
-                - table.misses * table.false_alarms
-            ),
-            hss_denominator,
-        ) if total else None,
-    )
 
 
 def fractions_skill_score(
